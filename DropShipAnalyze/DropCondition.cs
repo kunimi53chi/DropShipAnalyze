@@ -68,7 +68,7 @@ namespace DropShipAnalyze
 
         public string GetDisplayString()
         {
-            return api_maparea_id + "\t" + api_mapinfo_no + "\t" + Difficulty.ToKanji() + "\t" + api_no + "\t" + WRank.ToStr() + "\t" + TargetShipPossess + "隻";
+            return api_maparea_id + "\t" + api_mapinfo_no + "\t" + api_no + "\t" + Difficulty.ToKanji() + "\t" + WRank.ToStr() + "\t" + TargetShipPossess + "隻";
         }
 
 
@@ -95,8 +95,8 @@ namespace DropShipAnalyze
             return
                 this.api_maparea_id * 10000000 +
                 this.api_mapinfo_no * 1000000 +
-                (int)this.Difficulty * 100000 +
-                this.api_no * 1000 +
+                this.api_no * 10000 +
+                (int)this.Difficulty * 1000 +
                 (int)this.WRank * 100 +
                 this.TargetShipPossess;
         }

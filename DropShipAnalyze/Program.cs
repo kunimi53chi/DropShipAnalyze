@@ -5,19 +5,23 @@ using System.Text;
 using System.Threading.Tasks;
 using System.IO;
 using System.IO.Compression;
+using KCVDB.LocalAnalyze;
 
 namespace DropShipAnalyze
 {
     class Program
-    {        
+    {
+
+        static object lockObject = new object();
+        
         static void Main(string[] args)
         {
             //------ パラメーター設定
             var files = Directory.GetFiles(@"Enter your log-file directory");
-            int id = 431;//U-511 431　ターゲットのID
-            int[] sameids =  new int[] { 431, 334, 436 }; //同一とみなす艦のID
-            string shipname = "U-511";
-            string date = "2016/05/07";
+            int id = 155;//U-511 431　ターゲットのID
+            int[] sameids =  new int[] { 155, 403 }; //同一とみなす艦のID
+            string shipname = "伊401";
+            string date = "2016/05/03";
             //-------------------------
 
             //--同一艦
@@ -30,79 +34,30 @@ namespace DropShipAnalyze
             var totalsummary = new DropSummary();
             int cnt = 1;
 
-            foreach (var f in files)
+            Console.Title = "Started : " + DateTime.Now;
+
+            Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = 2 }, f =>
             {
                 Console.WriteLine("Analyzing {0} / {1}", cnt, files.Length);
                 cnt++;
 
-                //テキストの読み込み
-                Analyzer analyzer = null;
-                switch(Path.GetExtension(f))
-                {
-                    //.logファイルならそのまま読み込み
-                    case ".log":
-                        try
-                        {
-                            var fullline = File.ReadAllLines(f);
+                var ext = Path.GetExtension(f);
+                if (ext != ".gz" && ext != ".log") return;
 
-                            analyzer = new Analyzer(fullline);
-                        }
-                        catch(Exception ex)
-                        {
-                            Console.WriteLine(".log-file read failed");
-                            Console.WriteLine(ex.ToString());
-                            continue;
-                        }
-                        break;
-                    //.gzファイルは解凍して読み込み
-                    case ".gz":
-                        try
-                        {
-                            int num;
-                            byte[] buf = new byte[65536];
-                            var lines = new List<string>();
-                            using(var inStream = new FileStream(f, FileMode.Open, FileAccess.Read))
-                            using(var decompStream = new GZipStream(inStream, CompressionMode.Decompress))
-                            using(var ms = new MemoryStream())
-                            {
-                                //解凍
-                                while ((num = decompStream.Read(buf, 0, buf.Length)) > 0)
-                                    ms.Write(buf, 0, num);
-                                //Streamのポジションを戻す
-                                ms.Position = 0;
-                                //ストリームの読み込み
-                                using(var sr = new StreamReader(ms))
-                                {
-                                    while (sr.Peek() >= 0)
-                                    {
-                                        var line = sr.ReadLine();
-                                        if (!string.IsNullOrEmpty(line)) lines.Add(line);
-                                    }
-                                }
-                            }
 
-                            analyzer = new Analyzer(lines);
-                        }
-                        catch(Exception ex)
-                        {
-                            Console.WriteLine(".gz-file read failed");
-                            Console.WriteLine(ex.ToString());
-                            continue;
-                        }
-                        break;
-                }
+                var fullline = KCVDBLogFile.ParseAllLines(f);
+                var analyzer = new Analyzer(fullline);
 
-                if(analyzer == null)
-                {
-                    Console.WriteLine("analyzer create failed");
-                    continue;
-                }
                 //解析
                 analyzer.Analyze(id, sameids);
 
                 //テーブルのマージ
-                if(analyzer.Summary != null) totalsummary = totalsummary.Merge(analyzer.Summary);
-            }
+                if (analyzer.Summary != null)
+                {
+                    lock(lockObject)
+                        totalsummary = totalsummary.Merge(analyzer.Summary);
+                }
+            });
 
 
             //結果表示用
@@ -110,14 +65,22 @@ namespace DropShipAnalyze
             sb.AppendFormat("ID = {0} {1}({2})", id, shipname, date).AppendLine();
             foreach (var d in totalsummary.OrderBy(x => x.Key.GetHashCode()))
             {
-                if (d.Value.GetDropRatio(id) == 0.0) continue;
+                //if (d.Value.GetDropRatio(id) == 0.0) continue;
+
+                var prob = d.Value.GetDropRatio(id);
+                var num = d.Value.GetDropNum(id);
+                var ci95 = Statics.ConfidenceIntervalBinomial(prob, d.Value.TotalNum);
 
                 sb.Append(d.Key.GetDisplayString());
                 sb.Append("\t");
-                sb.Append(d.Value.GetDropRatio(id).ToString("P2"));
+                sb.Append(ci95.Lower.ToString("P2"));
                 sb.Append("\t");
-                sb.Append(d.Value.GetDropNum(id));
-                sb.Append(" / ");
+                sb.Append(prob.ToString("P2"));
+                sb.Append("\t");
+                sb.Append(ci95.Upper.ToString("P2"));
+                sb.Append("\t");
+                sb.Append(num);
+                sb.Append("\t");
                 sb.Append(d.Value.TotalNum);
 
                 sb.AppendLine();

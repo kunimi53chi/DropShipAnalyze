@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.IO;
 using Newtonsoft.Json;
 using DropShipAnalyze.DeserializeClassFormat;
+using KCVDB.LocalAnalyze;
 
 namespace DropShipAnalyze
 {
@@ -17,7 +18,7 @@ namespace DropShipAnalyze
         /// <summary>
         /// ファイルから読み込んだテキストデータ（行単位）
         /// </summary>
-        public IEnumerable<string> FullTextLines { get; private set; }
+        public IEnumerable<KCVDBRow> ParsedFullTextLines { get; private set; }
 
         /// <summary>
         /// 出撃前に読み込まれるマップデータ
@@ -38,11 +39,11 @@ namespace DropShipAnalyze
         public DropSummary Summary { get; private set; }
 
         //コンストラクタ
-        public Analyzer(IEnumerable<string> fullTextLines)
+        public Analyzer(IEnumerable<KCVDBRow> parsedFullTextLines)
         {
-            if (fullTextLines == null) throw new NullReferenceException("fullTextDataがNullです");
+            if (parsedFullTextLines == null) throw new NullReferenceException("parsedFullTextDataがNullです");
 
-            this.FullTextLines = fullTextLines;
+            this.ParsedFullTextLines = parsedFullTextLines;
 
             this.MapInfo = new List<ApiMapInfo>();
             this.NowCell = new ApiRashin();
@@ -58,58 +59,36 @@ namespace DropShipAnalyze
         public void Analyze(int targetShipid, int[] sameShipIds)
         {
             //行単位の分析
-            foreach (var l in FullTextLines)
+            foreach (var l in ParsedFullTextLines)
             {
-                var cell = l.Split('\t');
-                // [0] AgentID
-                // [1] SessionID
-                // [2] Path
-                // [3] HttpStatusCode
-                // [4] ServerTime
-                // [5] LocalTime
-                // [6] RequestBody
-                // [7] ResponseBody
-
-                if (cell.Length < 8)
-                {
-                    Console.WriteLine("Incorrect Line");
-                    continue;
-                }
-
-                //PathからAPIの分類
-                var paths = cell[2].Replace("//", "/").Split('/');
-                if (paths.Length < 5)
-                {
-                    continue;
-                }
-
-                switch (paths[3])
+                switch (l.KcsapiParent)
                 {
                     case "api_port":
-                        ReadPort(cell[7]);
+                        ReadPort(l.ResponseValue);
                         break;
                     case "api_get_member":
-                        if (paths[4] == "mapinfo")
+                        if (l.KcsapiChildren == "mapinfo")
                         {
-                            ReadMapInfo(cell[7]);
+                            ReadMapInfo(l.ResponseValue);
                         }
                         break;
                     case "api_req_map":
-                        switch (paths[4])
+                        switch (l.KcsapiChildren)
                         {
                             case "select_eventmap_rank":
-                                ReadSelectEventRank(cell[6]);
+                                ReadSelectEventRank(l.RequestValue);
                                 break;
                             case "start":
                             case "next":
-                                ReadMapStartOrNext(cell[7]);
+                                ReadMapStartOrNext(l.ResponseValue);
                                 break;
                         }
                         break;
                     default:
-                        if (paths[4] == "battleresult" && NowCell != null && NowCell.api_maparea_id == 34)
+                        if (l.KcsapiChildren == "battleresult" && NowCell != null 
+                            && NowCell.api_maparea_id == 34 && NowCell.api_mapinfo_no == 3 && (NowCell.api_no == 4 || NowCell.api_no == 6))
                         {
-                            ReadBattleResult(cell[7], targetShipid, sameShipIds);
+                            ReadBattleResult(l.ResponseValue, targetShipid, sameShipIds);
                         }
                         break;
                 }
@@ -120,7 +99,7 @@ namespace DropShipAnalyze
         {
             var strjson = responseBody.Replace("svdata=", "");
             var root = JsonConvert.DeserializeObject<RootMap>(strjson);
-            if (root.api_data != null) MapInfo = root.api_data;
+            if (root != null && root.api_data != null) MapInfo = root.api_data;
         }
 
         public void ReadPort(string responseBody)
@@ -168,6 +147,7 @@ namespace DropShipAnalyze
 
             //勝敗ランクの取得
             var winrank = WinRankEx.GetWinRank(battleResult.api_data.api_win_rank);
+            if (winrank != WinRank.S) return;
 
             //作戦難易度
             if (NowCell == null || MapInfo == null) return;
